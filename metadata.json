@@ -1,0 +1,6 @@
+{
+  "name": "EbClaude - Free Self-Hosted Claude AI",
+  "description": "A polished web interface for Claude AI using Puter.js, now with Firebase authentication and persistent cloud-synced chat history.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

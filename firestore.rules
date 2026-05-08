@@ -1,0 +1,101 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == 'ebisamagarsaa@gmail.com'
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Validation Blueprints
+    function isValidUser(data) {
+      let requiredKeys = ['uid', 'email', 'createdAt'];
+      let optionalKeys = ['displayName', 'photoURL', 'isAdmin'];
+      let isCreate = resource == null;
+      return data.keys().hasAll(requiredKeys) &&
+             data.keys().size() <= (requiredKeys.size() + optionalKeys.size()) &&
+             data.uid == request.auth.uid &&
+             data.email is string && data.email.size() <= 256 &&
+             (isCreate ? data.createdAt == request.time : data.createdAt == resource.data.createdAt) &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100)) &&
+             (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1024)) &&
+             (!('isAdmin' in data) || (isCreate ? data.isAdmin == (data.email == 'ebisamagarsaa@gmail.com') : data.isAdmin == resource.data.isAdmin));
+    }
+
+    function isValidConversation(data) {
+      let requiredKeys = ['id', 'userId', 'title', 'createdAt', 'updatedAt'];
+      let optionalKeys = ['model'];
+      let isCreate = resource == null;
+      return data.keys().hasAll(requiredKeys) &&
+             data.keys().size() <= (requiredKeys.size() + optionalKeys.size()) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.userId == request.auth.uid &&
+             data.title is string && data.title.size() <= 500 &&
+             (isCreate ? data.createdAt == request.time : data.createdAt == resource.data.createdAt) &&
+             data.updatedAt == request.time &&
+             (!('model' in data) || (data.model is string && data.model.size() <= 100));
+    }
+
+    function isValidMessage(data) {
+      let requiredKeys = ['id', 'conversationId', 'userId', 'role', 'content', 'createdAt'];
+      let isCreate = resource == null;
+      return data.keys().hasAll(requiredKeys) &&
+             data.keys().size() == requiredKeys.size() &&
+             data.id is string && data.id.size() <= 128 &&
+             data.conversationId is string && data.conversationId.size() <= 128 &&
+             data.userId == request.auth.uid &&
+             data.role in ['user', 'assistant'] &&
+             data.content is string && data.content.size() <= 50000 &&
+             (isCreate ? data.createdAt == request.time : data.createdAt == resource.data.createdAt);
+    }
+
+    // Collection Rules
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create, update: if isOwner(userId) && isValidUser(request.resource.data);
+    }
+
+    match /conversations/{conversationId} {
+      allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidConversation(request.resource.data);
+      allow update: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin()) && isValidConversation(request.resource.data);
+      allow delete: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+
+      match /messages/{messageId} {
+        allow get, list: if isSignedIn() && (get(/databases/$(database)/documents/conversations/$(conversationId)).data.userId == request.auth.uid || isAdmin());
+        allow create: if isSignedIn() && 
+                      isValidMessage(request.resource.data) && 
+                      get(/databases/$(database)/documents/conversations/$(conversationId)).data.userId == request.auth.uid;
+        allow update, delete: if isSignedIn() && (get(/databases/$(database)/documents/conversations/$(conversationId)).data.userId == request.auth.uid || isAdmin());
+      }
+    }
+    
+    // Explicit deny for any shadow fields
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if false; // System only
+    }
+  }
+}
